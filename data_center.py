@@ -6,6 +6,8 @@ from thread import *
 from collections import deque
 import threading
 
+from twisted.internet import task
+
 recv_client_channel = []
 recv_data_center_channels = []
 send_data_center_channels = {}
@@ -34,11 +36,9 @@ class MultiPaxos:
         self.buy_request_queue.append(number_of_tickets)
 
     def send_prepare_message(self):
-
         self.ballot_number = self.ballot_number + 1
         #incrementing acks for this ballot number as leader votes for itself
         self.acks_ballot_dict[self.ballot_number] = 1
-        time.sleep(4)
         data = json.dumps({'type': 'PREPARE',
                            'ballot_number': {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id},
                            'index': self.lowest_available_index})
@@ -121,15 +121,15 @@ class MultiPaxos:
 
 
     def send_accept_message(self,received_ack_ballot_number,my_value,index):
-        # incrementing ACCEPT REPLIES for this ballot number as leader accepts its own value
+        # setting ACCEPT REPLIES for this ballot number as 1 as the leader accepts its own value
         self.accept_replies_ballot_dict[received_ack_ballot_number['ballot_num']] = 1
         data = json.dumps({'type': 'ACCEPT',
                            'ballot_number': received_ack_ballot_number,
                            'my_value': my_value,
                            'index': index})
 
-        for data_center_id in send_data_center_channels:
-            send_data_center_channels[data_center_id].send(data)
+        for send_data_center_id in send_data_center_channels:
+            send_data_center_channels[send_data_center_id].send(data)
 
     #method to be executed when followers receive accept message from the leader
     def receive_accept_message(self,accept_message):
@@ -178,7 +178,7 @@ class MultiPaxos:
                     self.send_decide_message(ballot_number,decided_value,index)
 
         else:
-            print "waiting for majority accept replies ** "
+            print "***"
 
     def send_decide_message(self,ballot_number,decided_value,index):
         data = json.dumps(
@@ -220,7 +220,7 @@ def setup_receive_channels(s):
 
 def setup_send_channels():
         time.sleep(10)
-        for i in range(2):
+        for i in range(3):
             if str(i+1) != data_center_id:
                 data_center_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 ip_address = config["data_center_details"][str(i+1)]["ip"]
@@ -245,9 +245,7 @@ def receive_connect_message_common():
                     recv_client_channel.append(socket)
                 elif msg['name'] == 'data_center':
                     recv_data_center_channels.append(socket)
-                    #print "Connection objects for the other data centers is ", data_center_channels
         except:
-            print 'Exception occured while receiving connect messages'
             print traceback.print_exc()
 
 def receive_message_client():
@@ -265,7 +263,8 @@ def receive_message_client():
                         paxos_obj.initiate_phase_one()
 
         except:
-            print traceback.print_exc()
+            time.sleep(0.25)
+            continue
 
 def receive_message_datacenters():
     while True:
@@ -287,8 +286,8 @@ def receive_message_datacenters():
                         paxos_obj.receive_decide_message(msg)
 
             except:
-                print traceback.print_exc()
-                time.sleep(1)
+                time.sleep(0.25)
+                continue
 
 #start of program execution
 
@@ -302,6 +301,7 @@ with open("config.json", "r") as configFile:
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.setblocking(0)
 s.bind((ip_address, int(port_number)))
 print 'Bound at ',ip_address, port_number
 s.listen(10)
