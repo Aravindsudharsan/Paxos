@@ -5,8 +5,7 @@ import traceback
 from thread import *
 from collections import deque
 import threading
-
-from twisted.internet import task
+from Queue import Queue
 
 recv_client_channel = []
 recv_data_center_channels = []
@@ -16,6 +15,7 @@ data_center_id = None
 
 class MultiPaxos:
     data_center_id = None
+    leader_data_center_id = None
     lowest_available_index = 0
     ballot_number = 0
     accept_num_index_dict ={}
@@ -27,6 +27,7 @@ class MultiPaxos:
     accept_replies_ballot_dict={}
     log = []
     ticket_counter = 100
+    leader_heartbeat_queue = Queue()
 
     def initiate_phase_one(self):
         self.send_prepare_message()
@@ -169,6 +170,9 @@ class MultiPaxos:
         # received ACCEPT_REPLY from majority of cohort/follower data centers
         if self.accept_replies_ballot_dict[received_accept_reply_ballot] == self.quorum_size:
             # here can/should i execute state machine ??
+            #here i have gotten majority in 2nd phase, so I'm the leader and now I can start sending heartbeat messages to all other data centers
+            if self.leader_data_center_id == None:
+                self.send_heartbeat_from_leader()
             if self.buy_request_queue[0] == decided_value:
                 self.buy_request_queue.popleft()
                 if len(self.log) == index:
@@ -202,6 +206,44 @@ class MultiPaxos:
     def execute_state_machine(self,ticket_count):
         self.ticket_counter = self.ticket_counter - ticket_count
         print 'Current value of state machine :', self.ticket_counter, ' tickets'
+
+    def send_heartbeat_from_leader(self):
+        self.leader_data_center_id = self.data_center_id
+        start_new_thread(self.send_heartbeat_to_followers, ())
+
+    def send_heartbeat_to_followers(self):
+        while True:
+            data = json.dumps({
+                'type': 'HEARTBEAT',
+                'leader_data_center_id': self.data_center_id
+            })
+            for send_data_center_id in send_data_center_channels:
+                send_data_center_channels[send_data_center_id].send(data)
+            time.sleep(3)
+
+    def receive_heartbeat_from_leader(self,msg):
+        #3 scenarios
+        # - 1.receiving heartbeat for the first time from the very first leader
+        # - 2.receiving heartbeat for the subsequent times after a leader has been elected
+        # - 3.receiving heartbeat after old leader is dead and new leader has gotten elected --- instead of this can we reset leader data center id to be none
+        #   when the leader failure gets detected ???
+        self.leader_heartbeat_queue.put(msg)
+        #print "leader heartbeat queue ",self.leader_heartbeat_queue[0]
+        if self.leader_data_center_id == None:
+            # - 1.receiving heartbeat for the first time from the very first leader
+            start_new_thread(self.check_heartbeat_from_leader, ())
+
+    def check_heartbeat_from_leader(self):
+        while True:
+            #check the queue max every 3 seconds to see if a value is present (True means it is a blocking call )
+            try:
+                heartbeat_message = self.leader_heartbeat_queue.get(True, 3.5)
+                print "heartbeat message from leader ", heartbeat_message
+            except:
+                print 'Exception @@@@@@@'
+                print traceback.print_exc()
+                #print 'Its possible that the leader is down, breaking **'
+                break
 
 
 #******************
@@ -263,7 +305,6 @@ def receive_message_client():
                         paxos_obj.initiate_phase_one()
 
         except:
-            time.sleep(0.25)
             continue
 
 def receive_message_datacenters():
@@ -284,9 +325,10 @@ def receive_message_datacenters():
                         paxos_obj.receive_accept_reply_message(msg)
                     elif msg['type'] == 'DECIDE':
                         paxos_obj.receive_decide_message(msg)
-
+                    elif msg['type'] == 'HEARTBEAT':
+                        print "received heartbeat "
+                        #paxos_obj.receive_heartbeat_from_leader(msg)
             except:
-                time.sleep(0.25)
                 continue
 
 #start of program execution
