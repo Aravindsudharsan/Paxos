@@ -217,6 +217,7 @@ class MultiPaxos:
                 'type': 'HEARTBEAT',
                 'leader_data_center_id': self.data_center_id
             })
+
             for send_data_center_id in send_data_center_channels:
                 send_data_center_channels[send_data_center_id].send(data)
             time.sleep(3)
@@ -228,21 +229,25 @@ class MultiPaxos:
         # - 3.receiving heartbeat after old leader is dead and new leader has gotten elected --- instead of this can we reset leader data center id to be none
         #   when the leader failure gets detected ???
         self.leader_heartbeat_queue.put(msg)
+        print 'AFTER HAVE PUT%%%%%'
         #print "leader heartbeat queue ",self.leader_heartbeat_queue[0]
         if self.leader_data_center_id == None:
             # - 1.receiving heartbeat for the first time from the very first leader
+            self.leader_data_center_id = msg['leader_data_center_id']
+            print 'Starting new thread -----'
             start_new_thread(self.check_heartbeat_from_leader, ())
 
     def check_heartbeat_from_leader(self):
         while True:
             #check the queue max every 3 seconds to see if a value is present (True means it is a blocking call )
+            time.sleep(3)
             try:
-                heartbeat_message = self.leader_heartbeat_queue.get(True, 3.5)
-                print "heartbeat message from leader ", heartbeat_message
+                print 'BEFORE POLLING%%%'
+                heartbeat_message = self.leader_heartbeat_queue.get(False)
             except:
-                print 'Exception @@@@@@@'
-                print traceback.print_exc()
-                #print 'Its possible that the leader is down, breaking **'
+                #print traceback.print_exc()
+                print '** Detected leader failure **'
+                self.leader_data_center_id = None
                 break
 
 
@@ -313,7 +318,7 @@ def receive_message_datacenters():
             try:
                 message_dc = data_center_socket.recv(4096)
                 if message_dc:
-                    print "Message received from data center ", message_dc
+                    #print "Message received from data center ", message_dc
                     msg = json.loads(message_dc)
                     if msg['type'] == 'PREPARE':
                         paxos_obj.receive_prepare_message(msg)
@@ -326,8 +331,7 @@ def receive_message_datacenters():
                     elif msg['type'] == 'DECIDE':
                         paxos_obj.receive_decide_message(msg)
                     elif msg['type'] == 'HEARTBEAT':
-                        print "received heartbeat "
-                        #paxos_obj.receive_heartbeat_from_leader(msg)
+                        paxos_obj.receive_heartbeat_from_leader(msg)
             except:
                 continue
 
