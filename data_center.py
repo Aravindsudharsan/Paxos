@@ -250,6 +250,9 @@ class MultiPaxos:
                 self.leader_data_center_id = None
                 break
 
+    def forward_request_to_leader(self,message):
+        print 'Forwarding request to leader with data center id ',self.leader_data_center_id
+        send_data_center_channels[self.leader_data_center_id].send(message)
 
 #******************
 
@@ -304,10 +307,22 @@ def receive_message_client():
                     print "Message received from client ", message
                     msg = json.loads(message)
                     if msg['type'] == 'BUY':
+                        print "data center id is", paxos_obj.data_center_id  # added
                         #initiate Phase 1 of Paxos to float a leader election
                         #here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
-                        paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
-                        paxos_obj.initiate_phase_one()
+                        # 3 scenarios - 1.I'm the leader 2.I'm a follower and a leader exists 3.No leader has been elected till now
+                        if paxos_obj.data_center_id == paxos_obj.leader_data_center_id:
+                            print 'Im the leader and i can directly run phase 2 '
+                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
+                            #here must initiate phase 2 directly - to be done
+                        elif paxos_obj.leader_data_center_id != None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
+                            print 'I know im the follower'
+                            paxos_obj.forward_request_to_leader(msg)
+                        elif paxos_obj.leader_data_center_id == None:
+                            print 'I have to initiate leader election !!'
+                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
+                            paxos_obj.initiate_phase_one()
+
 
         except:
             continue
