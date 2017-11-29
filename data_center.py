@@ -202,10 +202,16 @@ class MultiPaxos:
             self.lowest_available_index=index+1
             #should i execute state machine here ??
             self.execute_state_machine(decided_value)
+	    
 
     def execute_state_machine(self,ticket_count):
         self.ticket_counter = self.ticket_counter - ticket_count
         print 'Current value of state machine :', self.ticket_counter, ' tickets'
+	data1=json.dumps({'type':'RESULT',
+			 'ticket_count':self.ticket_counter,
+			 'log_value':self.log})#added
+	recv_client_channel.send(data1) # added
+
 
     def send_heartbeat_from_leader(self):
         self.leader_data_center_id = self.data_center_id
@@ -250,6 +256,9 @@ class MultiPaxos:
                 self.leader_data_center_id = None
                 break
 
+    def forward_request_to_leader(self,message):
+        print 'Forwarding request to leader with data center id ',self.leader_data_center_id
+        send_data_center_channels[self.leader_data_center_id].send(message)
 
 #******************
 
@@ -278,7 +287,6 @@ def setup_send_channels():
                     data = json.dumps({'name': 'data_center', 'type': 'CON'})
                     data_center_socket.send(data)
                     send_data_center_channels[i+1]=data_center_socket
-		    print "send data center channels " , send_data_center_channels #added
                 except:
                     print 'Exception occurred while connecting to the other data centers '
                     print traceback.print_exc()
@@ -291,9 +299,9 @@ def receive_connect_message_common():
             if msg['type'] == 'CON':
                 if msg['name'] == 'client':
                     recv_client_channel.append(socket)
+		    print " ****" , recv_client_channel
                 elif msg['name'] == 'data_center':
                     recv_data_center_channels.append(socket)
-		    print "receive data center channels" , recv_data_center_channels #added	
         except:
             print traceback.print_exc()
 
@@ -306,16 +314,22 @@ def receive_message_client():
                     print "Message received from client ", message
                     msg = json.loads(message)
                     if msg['type'] == 'BUY':
-		    	print "data center id is",paxos_obj.data_center_id #added
-			if(paxos_obj.data_center_id!=1): #added
+                        print "data center id is", paxos_obj.data_center_id  # added
                         #initiate Phase 1 of Paxos to float a leader election
                         #here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
-				send_data_center_channels[1].send(message)   #added                        	
-				paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
-                        	paxos_obj.initiate_phase_one()
-			else: #added
-				paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
-                        	paxos_obj.initiate_phase_one()	
+                        # 3 scenarios - 1.I'm the leader 2.I'm a follower and a leader exists 3.No leader has been elected till now
+                        if paxos_obj.data_center_id == paxos_obj.leader_data_center_id:
+                            print 'Im the leader and i can directly run phase 2 '
+                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
+                            #here must initiate phase 2 directly - to be done
+                        elif paxos_obj.leader_data_center_id != None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
+                            print 'I know im the follower'
+                            paxos_obj.forward_request_to_leader(msg)
+                        elif paxos_obj.leader_data_center_id == None:
+                            print 'I have to initiate leader election !!'
+                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
+                            paxos_obj.initiate_phase_one()
+
 
         except:
             continue
@@ -376,4 +390,4 @@ start_new_thread(receive_message_datacenters, ())
 while True:
     message = raw_input("Enter request for tickets : ")
     if message == "buy":
-    	paxos_obj.buy_tickets
+	paxos_obj.buy_tickets
