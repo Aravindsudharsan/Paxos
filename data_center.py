@@ -202,10 +202,16 @@ class MultiPaxos:
             self.lowest_available_index=index+1
             #should i execute state machine here ??
             self.execute_state_machine(decided_value)
+	    
 
     def execute_state_machine(self,ticket_count):
         self.ticket_counter = self.ticket_counter - ticket_count
         print 'Current value of state machine :', self.ticket_counter, ' tickets'
+	data1=json.dumps({'type':'RESULT',
+			 'ticket_count':self.ticket_counter,
+			 'log_value':self.log})#added
+	recv_client_channel.send(data1) # added
+
 
     def send_heartbeat_from_leader(self):
         self.leader_data_center_id = self.data_center_id
@@ -293,6 +299,7 @@ def receive_connect_message_common():
             if msg['type'] == 'CON':
                 if msg['name'] == 'client':
                     recv_client_channel.append(socket)
+		    print " ****" , recv_client_channel
                 elif msg['name'] == 'data_center':
                     recv_data_center_channels.append(socket)
         except:
@@ -383,4 +390,4 @@ start_new_thread(receive_message_datacenters, ())
 while True:
     message = raw_input("Enter request for tickets : ")
     if message == "buy":
-        paxos_obj.buy_tickets
+	paxos_obj.buy_tickets

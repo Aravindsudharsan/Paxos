@@ -2,6 +2,8 @@ import json
 import socket
 import time
 import traceback
+from thread import *
+import threading
 
 data_center_id = raw_input("Enter the data center id to connect to:")
 client_id = raw_input("Enter the client id :")
@@ -21,6 +23,11 @@ with open("config.json", "r") as configFile:
         print 'Exception occurred while connecting to data center'
         print traceback.print_exc()
 
+def receive_statemachine_output(data_center_socket):#added
+	msg_data=data_center_socket.recv(4096)
+	received_message_data=json.loads(msg_data)
+	print "The resulting tickets from state machine is", received_message_data['ticket_count']
+	print "The commited log value is" , received_message_data['log_value']
 
 while True:
     message = raw_input("Enter request for tickets : ")
@@ -29,4 +36,7 @@ while True:
         print "number of tickets is ", number_of_tickets
         data = json.dumps({'client_id': client_id, 'type': 'BUY', 'number_of_tickets':number_of_tickets})
         data_center_socket.send(data)
+start_new_thread(receive_statemachine_output,())#added
+    
+
 
