@@ -29,7 +29,8 @@ class MultiPaxos:
     ticket_counter = 100
     leader_heartbeat_queue = Queue()
 
-    def initiate_phase_one(self):
+    def initiate_phase_one(self, msg):
+        self.add_to_ticket_request_queue(msg['number_of_tickets'])
         self.send_prepare_message()
 
     def add_to_ticket_request_queue(self,number_of_tickets):
@@ -197,20 +198,24 @@ class MultiPaxos:
     def receive_decide_message(self,decide_message):
         index = decide_message['index']
         decided_value = decide_message['my_value']
+
         if len(self.log) == index:
+            print 'BEFORE STATE MACHINE EXEC '
             self.log.append(decided_value)
             self.lowest_available_index=index+1
             #should i execute state machine here ??
             self.execute_state_machine(decided_value)
-	    
 
     def execute_state_machine(self,ticket_count):
         self.ticket_counter = self.ticket_counter - ticket_count
         print 'Current value of state machine :', self.ticket_counter, ' tickets'
-	data1=json.dumps({'type':'RESULT',
-			 'ticket_count':self.ticket_counter,
-			 'log_value':self.log})#added
-	recv_client_channel.send(data1) # added
+        try:
+            result_data = json.dumps({'type': 'RESULT',
+                                        'ticket_count': self.ticket_counter,
+                                        'log_value': self.log})
+            recv_client_channel[0].send(result_data)
+        except:
+            print 'exception where im checking'
 
 
     def send_heartbeat_from_leader(self):
@@ -235,12 +240,11 @@ class MultiPaxos:
         # - 3.receiving heartbeat after old leader is dead and new leader has gotten elected --- instead of this can we reset leader data center id to be none
         #   when the leader failure gets detected ???
         self.leader_heartbeat_queue.put(msg)
-        print 'AFTER HAVE PUT%%%%%'
+        #print 'AFTER HAVE PUT%%%%%'
         #print "leader heartbeat queue ",self.leader_heartbeat_queue[0]
         if self.leader_data_center_id == None:
             # - 1.receiving heartbeat for the first time from the very first leader
             self.leader_data_center_id = msg['leader_data_center_id']
-            print 'Starting new thread -----'
             start_new_thread(self.check_heartbeat_from_leader, ())
 
     def check_heartbeat_from_leader(self):
@@ -248,7 +252,7 @@ class MultiPaxos:
             #check the queue max every 3 seconds to see if a value is present (True means it is a blocking call )
             time.sleep(3)
             try:
-                print 'BEFORE POLLING%%%'
+                #print 'BEFORE POLLING%%%'
                 heartbeat_message = self.leader_heartbeat_queue.get(False)
             except:
                 #print traceback.print_exc()
@@ -257,8 +261,14 @@ class MultiPaxos:
                 break
 
     def forward_request_to_leader(self,message):
-        print 'Forwarding request to leader with data center id ',self.leader_data_center_id
-        send_data_center_channels[self.leader_data_center_id].send(message)
+        send_data_center_channels[self.leader_data_center_id].send(json.dumps(message))
+
+    def initiate_phase_two(self,message):
+        #this function directly initiates phase 2 as leader is stable
+        self.add_to_ticket_request_queue(message['number_of_tickets'])
+        ballot_number = {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id}
+        my_value = message['number_of_tickets']
+        self.send_accept_message(ballot_number,my_value, self.lowest_available_index)
 
 #******************
 
@@ -299,7 +309,6 @@ def receive_connect_message_common():
             if msg['type'] == 'CON':
                 if msg['name'] == 'client':
                     recv_client_channel.append(socket)
-		    print " ****" , recv_client_channel
                 elif msg['name'] == 'data_center':
                     recv_data_center_channels.append(socket)
         except:
@@ -315,22 +324,19 @@ def receive_message_client():
                     msg = json.loads(message)
                     if msg['type'] == 'BUY':
                         print "data center id is", paxos_obj.data_center_id  # added
-                        #initiate Phase 1 of Paxos to float a leader election
-                        #here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
+                        # initiate Phase 1 of Paxos to float a leader election
+                        # here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
                         # 3 scenarios - 1.I'm the leader 2.I'm a follower and a leader exists 3.No leader has been elected till now
                         if paxos_obj.data_center_id == paxos_obj.leader_data_center_id:
-                            print 'Im the leader and i can directly run phase 2 '
-                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
-                            #here must initiate phase 2 directly - to be done
-                        elif paxos_obj.leader_data_center_id != None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
-                            print 'I know im the follower'
+                            print 'Leader here - Directly run phase 2 '
+                            # here must initiate phase 2 directly
+                            paxos_obj.initiate_phase_two(msg)
+                        elif paxos_obj.leader_data_center_id is not None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
+                            print 'Follower here - forwarding request to leader'
                             paxos_obj.forward_request_to_leader(msg)
-                        elif paxos_obj.leader_data_center_id == None:
-                            print 'I have to initiate leader election !!'
-                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
-                            paxos_obj.initiate_phase_one()
-
-
+                        elif paxos_obj.leader_data_center_id is None:
+                            print 'Initiating leader election '
+                            paxos_obj.initiate_phase_one(msg)
         except:
             continue
 
@@ -354,6 +360,11 @@ def receive_message_datacenters():
                         paxos_obj.receive_decide_message(msg)
                     elif msg['type'] == 'HEARTBEAT':
                         paxos_obj.receive_heartbeat_from_leader(msg)
+                    elif msg['type'] == 'BUY':
+                        #here getting request from peer data center means that this data center is the stable leader
+                        #so directly initiate phase two
+                        print 'CHECKING FOR MESSAGE FROM PEER ---->'
+                        paxos_obj.initiate_phase_two(msg)
             except:
                 continue
 
@@ -390,4 +401,4 @@ start_new_thread(receive_message_datacenters, ())
 while True:
     message = raw_input("Enter request for tickets : ")
     if message == "buy":
-	paxos_obj.buy_tickets
+	    paxos_obj.buy_tickets
