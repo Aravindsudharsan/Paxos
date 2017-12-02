@@ -327,14 +327,13 @@ def receive_message_client():
                             print 'Follower here - forwarding request to leader'
                             paxos_obj.forward_request_to_leader(msg)
                         elif paxos_obj.leader_data_center_id == None:
-                            print 'I have to initiate leader election !!'
-                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
-                            paxos_obj.initiate_phase_one()
+                            print 'I have to initiate leader election '
+                            paxos_obj.initiate_phase_one(msg)
                     elif msg['type']=='SHOW':
-			            print "sending reply to client"
-			            data1=json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
-			            print "result is",data1
-			            recv_client_channel[0].send(data1)
+                        print "sending reply to client"
+                        data1=json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
+                        print "result is",data1
+                        recv_client_channel[0].send(data1)
 
         except:
             continue
@@ -345,7 +344,7 @@ def receive_message_datacenters():
             try:
                 message_dc = data_center_socket.recv(4096)
                 if message_dc:
-                    #print "Message received from data center ", message_dc
+                    print "Message received from data center ", message_dc
                     msg = json.loads(message_dc)
                     if msg['type'] == 'PREPARE':
                         paxos_obj.receive_prepare_message(msg)
