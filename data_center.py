@@ -207,12 +207,7 @@ class MultiPaxos:
     def execute_state_machine(self,ticket_count):
         self.ticket_counter = self.ticket_counter - ticket_count
         print 'Current value of state machine :', self.ticket_counter, ' tickets'
-	data1=json.dumps({'type':'RESULT',
-			 'ticket_count':self.ticket_counter,
-			 'log_value':self.log})#added
-	recv_client_channel.send(data1) # added
-
-
+	
     def send_heartbeat_from_leader(self):
         self.leader_data_center_id = self.data_center_id
         start_new_thread(self.send_heartbeat_to_followers, ())
@@ -329,7 +324,11 @@ def receive_message_client():
                             print 'I have to initiate leader election !!'
                             paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
                             paxos_obj.initiate_phase_one()
-
+                    elif msg['type']=='SHOW':
+			            print "sending reply to client"
+			            data1=json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
+			            print "result is",data1
+			            recv_client_channel[0].send(data1)
 
         except:
             continue
