@@ -282,6 +282,7 @@ def setup_send_channels():
                     data = json.dumps({'name': 'data_center', 'type': 'CON'})
                     data_center_socket.send(data)
                     send_data_center_channels[i+1]=data_center_socket
+                    print "data center channels connection socket is",send_data_center_channels
                 except:
                     print 'Exception occurred while connecting to the other data centers '
                     print traceback.print_exc()
@@ -297,6 +298,7 @@ def receive_connect_message_common():
 		    print " ****" , recv_client_channel
                 elif msg['name'] == 'data_center':
                     recv_data_center_channels.append(socket)
+                    print "receive data center channels",recv_data_center_channels
         except:
             print traceback.print_exc()
 
@@ -339,7 +341,7 @@ def receive_message_datacenters():
             try:
                 message_dc = data_center_socket.recv(4096)
                 if message_dc:
-                    #print "Message received from data center ", message_dc
+                    print "Message received from data center ", message_dc
                     msg = json.loads(message_dc)
                     if msg['type'] == 'PREPARE':
                         paxos_obj.receive_prepare_message(msg)
@@ -353,7 +355,16 @@ def receive_message_datacenters():
                         paxos_obj.receive_decide_message(msg)
                     elif msg['type'] == 'HEARTBEAT':
                         paxos_obj.receive_heartbeat_from_leader(msg)
+                    elif msg['type']=='exit':
+                        print "inside condition"
+                        id=int(msg['data_id'])
+                        print "id is",id
+                        print "dictionary is",send_data_center_channels
+                        print "key is",msg['data_id']
+                        del send_data_center_channels[id]
+                        print "updated send channel",send_data_center_channels
             except:
+                #print traceback.print_exc()
                 continue
 
 #start of program execution
@@ -387,6 +398,10 @@ start_new_thread(receive_message_client, ())
 start_new_thread(receive_message_datacenters, ())
 
 while True:
-    message = raw_input("Enter request for tickets : ")
+    message = raw_input("Enter the request : ")
     if message == "buy":
-	paxos_obj.buy_tickets
+	    paxos_obj.buy_tickets
+    elif message=='exit':
+        for key,value in send_data_center_channels.iteritems():
+            data=json.dumps({'type':message,'data_id':data_center_id})
+            value.send(data)
