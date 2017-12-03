@@ -6,7 +6,6 @@ from thread import *
 from collections import deque
 import threading
 from Queue import Queue
-import re
 
 recv_client_channel = []
 recv_data_center_channels = []
@@ -47,10 +46,7 @@ class MultiPaxos:
                            'index': self.lowest_available_index})
 
         for send_data_center_id in send_data_center_channels:
-            try:
-                send_data_center_channels[send_data_center_id].send(data)
-            except:
-                continue
+            send_data_center_channels[send_data_center_id].send(data)
 
     def receive_prepare_message(self, prepare_message):
 
@@ -85,7 +81,6 @@ class MultiPaxos:
             print "should i send reject ? CHECK CHECK !!!"
 
     def receive_ack_message(self, ack_message):
-
             ballot_number = ack_message['ballot_number']
             received_ack_ballot_number = ack_message['ballot_number']['ballot_num']
             received_ack_accept_num = ack_message['accept_num']
@@ -105,26 +100,23 @@ class MultiPaxos:
                     'accept_num': received_ack_accept_num,
                     'accept_val': received_ack_accept_val
             }]
+
             #received acks from majority of data centers
             if self.acks_ballot_dict[received_ack_ballot_number] == self.quorum_size:
-                try:
-                    array_accept_numVal = self.acks_ballot_accept_numVal[received_ack_ballot_number]
-                    highest_recv_ballot_num = max(d['accept_num'] for d in array_accept_numVal)
-                    for d in array_accept_numVal:
-                        if d['accept_num'] == highest_recv_ballot_num:
-                            highest_recv_ballot_val = d['accept_val']
-                            break
+                array_accept_numVal = self.acks_ballot_accept_numVal[received_ack_ballot_number]
+                highest_recv_ballot_num = max(d['accept_num'] for d in array_accept_numVal)
+                for d in array_accept_numVal:
+                    if d['accept_num'] == highest_recv_ballot_num:
+                        highest_recv_ballot_val = d['accept_val']
+                        break
 
-                    #if a value is got from highest ballot from received ACKs, set my value to that value; else take the first element from the request queue
-                    if highest_recv_ballot_val:
-                        my_value = highest_recv_ballot_val
-                    else:
-                        my_value = self.buy_request_queue[0]
+                #if a value is got from highest ballot from received ACKs, set my value to that value; else take the first element from the request queue
+                if highest_recv_ballot_val:
+                    my_value = highest_recv_ballot_val
+                else:
+                    my_value = self.buy_request_queue[0]
 
-                    self.send_accept_message(ballot_number,my_value,index)
-                except:
-                    print 'YAY EXCEPTION'
-                    print traceback.print_exc()
+                self.send_accept_message(ballot_number,my_value,index)
 
             else:
                 print 'here received ack could be of a number less than or greater than the quorum size --- what to be done ???'
@@ -139,10 +131,7 @@ class MultiPaxos:
                            'index': index})
 
         for send_data_center_id in send_data_center_channels:
-            try:
-                send_data_center_channels[send_data_center_id].send(data)
-            except:
-                continue
+            send_data_center_channels[send_data_center_id].send(data)
 
     #method to be executed when followers receive accept message from the leader
     def receive_accept_message(self,accept_message):
@@ -204,16 +193,12 @@ class MultiPaxos:
              'index': index})
 
         for data_center_id in send_data_center_channels:
-            try:
-                send_data_center_channels[data_center_id].send(data)
-            except:
-                continue
+            send_data_center_channels[data_center_id].send(data)
 
     def receive_decide_message(self,decide_message):
         index = decide_message['index']
         decided_value = decide_message['my_value']
-        print 'length of my log ---', len(self.log)
-        print 'index value is ----', index
+
         if len(self.log) == index:
             print 'BEFORE STATE MACHINE EXEC '
             self.log.append(decided_value)
@@ -224,7 +209,26 @@ class MultiPaxos:
     def execute_state_machine(self,ticket_count):
         self.ticket_counter = self.ticket_counter - ticket_count
         print 'Current value of state machine :', self.ticket_counter, ' tickets'
+<<<<<<< HEAD
+        try:
+            result_data = json.dumps({'type': 'RESULT',
+                                        'ticket_count': self.ticket_counter,
+                                        'log_value': self.log})
+            recv_client_channel[0].send(result_data)
+        except:
+            print 'exception where im checking'
+
+
+||||||| merged common ancestors
+	data1=json.dumps({'type':'RESULT',
+			 'ticket_count':self.ticket_counter,
+			 'log_value':self.log})#added
+	recv_client_channel.send(data1) # added
+
+
+=======
 	
+>>>>>>> 3e4d2b4b1ce3bfe086d60a46d496cf1f235e6624
     def send_heartbeat_from_leader(self):
         self.leader_data_center_id = self.data_center_id
         start_new_thread(self.send_heartbeat_to_followers, ())
@@ -237,10 +241,7 @@ class MultiPaxos:
             })
 
             for send_data_center_id in send_data_center_channels:
-                try:
-                    send_data_center_channels[send_data_center_id].send(data)
-                except:
-                    continue
+                send_data_center_channels[send_data_center_id].send(data)
             time.sleep(3)
 
     def receive_heartbeat_from_leader(self,msg):
@@ -250,6 +251,8 @@ class MultiPaxos:
         # - 3.receiving heartbeat after old leader is dead and new leader has gotten elected --- instead of this can we reset leader data center id to be none
         #   when the leader failure gets detected ???
         self.leader_heartbeat_queue.put(msg)
+        #print 'AFTER HAVE PUT%%%%%'
+        #print "leader heartbeat queue ",self.leader_heartbeat_queue[0]
         if self.leader_data_center_id == None:
             # - 1.receiving heartbeat for the first time from the very first leader
             self.leader_data_center_id = msg['leader_data_center_id']
@@ -265,7 +268,6 @@ class MultiPaxos:
             except:
                 #print traceback.print_exc()
                 print '** Detected leader failure **'
-                del send_data_center_channels[self.leader_data_center_id]
                 self.leader_data_center_id = None
                 break
 
@@ -343,15 +345,29 @@ def receive_message_client():
                         elif paxos_obj.leader_data_center_id is not None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
                             print 'Follower here - forwarding request to leader'
                             paxos_obj.forward_request_to_leader(msg)
-                        elif paxos_obj.leader_data_center_id == None:
-                            print 'I have to initiate leader election '
+<<<<<<< HEAD
+                        elif paxos_obj.leader_data_center_id is None:
+                            print 'Initiating leader election '
                             paxos_obj.initiate_phase_one(msg)
-                    elif msg['type']=='SHOW':
-                        print "sending reply to client"
-                        data1=json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
-                        print "result is",data1
-                        recv_client_channel[0].send(data1)
+||||||| merged common ancestors
+                        elif paxos_obj.leader_data_center_id == None:
+                            print 'I have to initiate leader election !!'
+                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
+                            paxos_obj.initiate_phase_one()
 
+
+=======
+                        elif paxos_obj.leader_data_center_id == None:
+                            print 'I have to initiate leader election !!'
+                            paxos_obj.add_to_ticket_request_queue(msg['number_of_tickets'])
+                            paxos_obj.initiate_phase_one()
+                    elif msg['type']=='SHOW':
+			            print "sending reply to client"
+			            data1=json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
+			            print "result is",data1
+			            recv_client_channel[0].send(data1)
+
+>>>>>>> 3e4d2b4b1ce3bfe086d60a46d496cf1f235e6624
         except:
             continue
 
@@ -361,29 +377,25 @@ def receive_message_datacenters():
             try:
                 message_dc = data_center_socket.recv(4096)
                 if message_dc:
-                    messages_dc = re.split('(\{.*?\})(?= *\{)', message_dc)
-                    for message in messages_dc:
-                        if message == '\n' or message == '' or message is None:
-                            continue
-                        msg = json.loads(message)
-                        print "Message received from data center ", message
-                        if msg['type'] == 'PREPARE':
-                            paxos_obj.receive_prepare_message(msg)
-                        elif msg['type'] == 'ACK':
-                            paxos_obj.receive_ack_message(msg)
-                        elif msg['type'] == 'ACCEPT':
-                            paxos_obj.receive_accept_message(msg)
-                        elif msg['type'] == 'ACCEPT_REPLY':
-                            paxos_obj.receive_accept_reply_message(msg)
-                        elif msg['type'] == 'DECIDE':
-                            paxos_obj.receive_decide_message(msg)
-                        elif msg['type'] == 'HEARTBEAT':
-                            paxos_obj.receive_heartbeat_from_leader(msg)
-                        elif msg['type'] == 'BUY':
-                            #here getting request from peer data center means that this data center is the stable leader
-                            #so directly initiate phase two
-                            print 'CHECKING FOR MESSAGE FROM PEER ---->'
-                            paxos_obj.initiate_phase_two(msg)
+                    #print "Message received from data center ", message_dc
+                    msg = json.loads(message_dc)
+                    if msg['type'] == 'PREPARE':
+                        paxos_obj.receive_prepare_message(msg)
+                    elif msg['type'] == 'ACK':
+                        paxos_obj.receive_ack_message(msg)
+                    elif msg['type'] == 'ACCEPT':
+                        paxos_obj.receive_accept_message(msg)
+                    elif msg['type'] == 'ACCEPT_REPLY':
+                        paxos_obj.receive_accept_reply_message(msg)
+                    elif msg['type'] == 'DECIDE':
+                        paxos_obj.receive_decide_message(msg)
+                    elif msg['type'] == 'HEARTBEAT':
+                        paxos_obj.receive_heartbeat_from_leader(msg)
+                    elif msg['type'] == 'BUY':
+                        #here getting request from peer data center means that this data center is the stable leader
+                        #so directly initiate phase two
+                        print 'CHECKING FOR MESSAGE FROM PEER ---->'
+                        paxos_obj.initiate_phase_two(msg)
             except:
                 continue
 
@@ -413,6 +425,7 @@ t1.join()
 #wait till all connections have been accepted before receiving messages from client/data center
 time.sleep(10)
 receive_connect_message_common()
+#time.sleep(5)
 start_new_thread(receive_message_client, ())
 start_new_thread(receive_message_datacenters, ())
 
