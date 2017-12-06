@@ -51,5 +51,11 @@ while True:
     elif message.startswith("show"):
         data=json.dumps({'client_id':client_id,'type':'SHOW'})
         data_center_socket.send(data)
+    elif message.startswith("change"):
+        new_data_center_details = message.split(" ")
+        ip_address = new_data_center_details[1]
+        port = new_data_center_details[2]
+        data = json.dumps({'client_id': client_id, 'type': 'CHANGE', 'ip': ip_address,'port': port})
+        data_center_socket.send(data)
 
 

@@ -13,6 +13,7 @@ recv_data_center_channels = []
 send_data_center_channels = {}
 recv_channels = []
 data_center_id = None
+highest_data_center_id = 0
 
 class MultiPaxos:
     data_center_id = None
@@ -29,9 +30,13 @@ class MultiPaxos:
     log = []
     ticket_counter = 100
     leader_heartbeat_queue = Queue()
+    reconfigure = False
 
     def initiate_phase_one(self, msg):
-        self.add_to_ticket_request_queue(msg['number_of_tickets'])
+        if msg['type'] == 'BUY':
+            self.add_to_ticket_request_queue(msg['number_of_tickets'])
+        elif msg['type'] == 'CHANGE':
+            self.add_to_ticket_request_queue(json.dumps(msg))
         self.send_prepare_message()
 
     def add_to_ticket_request_queue(self,number_of_tickets):
@@ -123,7 +128,6 @@ class MultiPaxos:
 
                     self.send_accept_message(ballot_number,my_value,index)
                 except:
-                    print 'YAY EXCEPTION'
                     print traceback.print_exc()
 
             else:
@@ -221,9 +225,32 @@ class MultiPaxos:
             #should i execute state machine here ??
             self.execute_state_machine(decided_value)
 
-    def execute_state_machine(self,ticket_count):
-        self.ticket_counter = self.ticket_counter - ticket_count
-        print 'Current value of state machine :', self.ticket_counter, ' tickets'
+    def execute_state_machine(self,decided_value):
+        try:
+            self.ticket_counter = self.ticket_counter - decided_value
+            print 'Current value of state machine :', self.ticket_counter, ' tickets'
+        except:
+            print 'Config change request'
+            self.add_data_center(decided_value)
+
+
+    def add_data_center(self,decided_value):
+        data_center_details = json.loads(decided_value)
+        ip = data_center_details['ip']
+        port = int(data_center_details['port'])
+        data_center_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            global highest_data_center_id
+            data_center_socket.connect((ip, int(port)))
+            print 'Connected to ' + ip + ' on port ' + str(port)
+            data = json.dumps({'name': 'data_center', 'type': 'CON'})
+            data_center_socket.send(data)
+            new_data_center_id = highest_data_center_id + 1
+            send_data_center_channels[new_data_center_id] = data_center_socket
+            highest_data_center_id = new_data_center_id
+        except:
+            print traceback.print_exc()
+
 	
     def send_heartbeat_from_leader(self):
         self.leader_data_center_id = self.data_center_id
@@ -274,9 +301,14 @@ class MultiPaxos:
 
     def initiate_phase_two(self,message):
         #this function directly initiates phase 2 as leader is stable
-        self.add_to_ticket_request_queue(message['number_of_tickets'])
+        if message['type'] == 'BUY':
+            my_value = message['number_of_tickets']
+
+        elif message['type'] == 'CHANGE':
+            my_value = json.dumps(message)
+
+        self.add_to_ticket_request_queue(my_value)
         ballot_number = {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id}
-        my_value = message['number_of_tickets']
         self.send_accept_message(ballot_number,my_value, self.lowest_available_index)
 
 #******************
@@ -287,6 +319,10 @@ def setup_receive_channels(s):
         try:
             conn, addr = s.accept()
             recv_channels.append(conn)
+
+            if paxos_obj.reconfigure:
+                print 'Adding new config data center to recv_data_center_channels'
+                recv_data_center_channels.append(conn)
         except:
             continue
             print 'Exception occurred while setting up receive channels '
@@ -306,6 +342,7 @@ def setup_send_channels():
                     data = json.dumps({'name': 'data_center', 'type': 'CON'})
                     data_center_socket.send(data)
                     send_data_center_channels[i+1]=data_center_socket
+                    highest_data_center_id = i+1
                 except:
                     print 'Exception occurred while connecting to the other data centers '
                     print traceback.print_exc()
@@ -314,12 +351,17 @@ def receive_connect_message_common():
     for socket in recv_channels:
         try:
             received_message = socket.recv(4096)
-            msg = json.loads(received_message)
-            if msg['type'] == 'CON':
-                if msg['name'] == 'client':
-                    recv_client_channel.append(socket)
-                elif msg['name'] == 'data_center':
-                    recv_data_center_channels.append(socket)
+            if received_message:
+                messages = re.split('(\{.*?\})(?= *\{)', received_message)
+                for message in messages:
+                    if message == '\n' or message == '' or message is None:
+                        continue
+                    msg = json.loads(message)
+                    if msg['type'] == 'CON':
+                        if msg['name'] == 'client':
+                            recv_client_channel.append(socket)
+                        elif msg['name'] == 'data_center':
+                            recv_data_center_channels.append(socket)
         except:
             print traceback.print_exc()
 
@@ -331,8 +373,7 @@ def receive_message_client():
                 if message:
                     print "Message received from client ", message
                     msg = json.loads(message)
-                    if msg['type'] == 'BUY':
-                        print "data center id is", paxos_obj.data_center_id  # added
+                    if msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
                         # initiate Phase 1 of Paxos to float a leader election
                         # here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
                         # 3 scenarios - 1.I'm the leader 2.I'm a follower and a leader exists 3.No leader has been elected till now
@@ -346,12 +387,9 @@ def receive_message_client():
                         elif paxos_obj.leader_data_center_id == None:
                             print 'I have to initiate leader election '
                             paxos_obj.initiate_phase_one(msg)
-                    elif msg['type']=='SHOW':
-                        print "sending reply to client"
-                        data1=json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
-                        print "result is",data1
-                        recv_client_channel[0].send(data1)
-
+                    elif msg['type'] == 'SHOW':
+                        data = json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
+                        recv_client_channel[0].send(data)
         except:
             continue
 
@@ -379,7 +417,7 @@ def receive_message_datacenters():
                             paxos_obj.receive_decide_message(msg)
                         elif msg['type'] == 'HEARTBEAT':
                             paxos_obj.receive_heartbeat_from_leader(msg)
-                        elif msg['type'] == 'BUY':
+                        elif msg['type'] == 'BUY' or msg['type'] == 'CHANGE' :
                             #here getting request from peer data center means that this data center is the stable leader
                             #so directly initiate phase two
                             print 'CHECKING FOR MESSAGE FROM PEER ---->'
@@ -415,6 +453,7 @@ time.sleep(10)
 receive_connect_message_common()
 start_new_thread(receive_message_client, ())
 start_new_thread(receive_message_datacenters, ())
+paxos_obj.reconfigure = True
 
 while True:
     message = raw_input("Enter request for tickets : ")
