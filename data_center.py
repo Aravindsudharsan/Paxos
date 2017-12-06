@@ -18,6 +18,7 @@ highest_data_center_id = 0
 class MultiPaxos:
     data_center_id = None
     leader_data_center_id = None
+    last_index=None
     lowest_available_index = 0
     ballot_number = 0
     accept_num_index_dict ={}
@@ -258,9 +259,11 @@ class MultiPaxos:
 
     def send_heartbeat_to_followers(self):
         while True:
+            time.sleep(3)
             data = json.dumps({
                 'type': 'HEARTBEAT',
-                'leader_data_center_id': self.data_center_id
+                'leader_data_center_id': self.data_center_id,
+                'lowest_index':self.lowest_available_index
             })
 
             for send_data_center_id in send_data_center_channels:
@@ -268,7 +271,6 @@ class MultiPaxos:
                     send_data_center_channels[send_data_center_id].send(data)
                 except:
                     continue
-            time.sleep(3)
 
     def receive_heartbeat_from_leader(self,msg):
         #3 scenarios
@@ -281,6 +283,12 @@ class MultiPaxos:
             # - 1.receiving heartbeat for the first time from the very first leader
             self.leader_data_center_id = msg['leader_data_center_id']
             start_new_thread(self.check_heartbeat_from_leader, ())
+        leader_lowest_available_index = msg['lowest_index']
+        if leader_lowest_available_index == self.lowest_available_index:
+            print "logs are matching"
+        else:
+            print "logs are not matching"
+            self.send_update_request_leader()
 
     def check_heartbeat_from_leader(self):
         while True:
@@ -311,6 +319,37 @@ class MultiPaxos:
         ballot_number = {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id}
         self.send_accept_message(ballot_number,my_value, self.lowest_available_index)
 
+    def send_update_request_leader(self):
+        message=json.dumps({
+            'type': 'UPDATE',
+            'last_index_follower': self.lowest_available_index-1,
+            'data_center_id': self.data_center_id
+        })
+        try:
+            send_data_center_channels[self.leader_data_center_id].send(message)
+        except:
+            print traceback.print_exc()
+
+    def send_log_update(self, msg):
+        try:
+            received_follower_last_index = msg['last_index_follower']
+            data_center_id = msg['data_center_id']
+            new_log = self.log[received_follower_last_index+1:]
+            message = json.dumps({
+            'type': 'UPDATED LOG',
+            'log':new_log
+            })
+            send_data_center_channels[data_center_id].send(message)
+        except:
+            print traceback.print_exc()
+
+    def receive_log_update(self, msg):
+        received_log_value=msg['log']
+        self.log.append(received_log)
+        print "new log value is",self.log
+
+
+
 #******************
 
 
@@ -330,6 +369,7 @@ def setup_receive_channels(s):
 
 
 def setup_send_channels():
+        global highest_data_center_id
         time.sleep(10)
         for i in range(3):
             if str(i+1) != data_center_id:
@@ -393,6 +433,7 @@ def receive_message_client():
         except:
             continue
 
+
 def receive_message_datacenters():
     while True:
         for data_center_socket in recv_data_center_channels:
@@ -417,11 +458,15 @@ def receive_message_datacenters():
                             paxos_obj.receive_decide_message(msg)
                         elif msg['type'] == 'HEARTBEAT':
                             paxos_obj.receive_heartbeat_from_leader(msg)
-                        elif msg['type'] == 'BUY' or msg['type'] == 'CHANGE' :
+                        elif msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
                             #here getting request from peer data center means that this data center is the stable leader
                             #so directly initiate phase two
                             print 'CHECKING FOR MESSAGE FROM PEER ---->'
                             paxos_obj.initiate_phase_two(msg)
+                        elif msg['type'] == 'UPDATE':
+                            paxos_obj.send_log_update(msg)
+                        elif msg['type'] == 'UPDATED LOG':
+                            paxos_obj.receive_log_update(msg)
             except:
                 continue
 
