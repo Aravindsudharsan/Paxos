@@ -32,6 +32,8 @@ class MultiPaxos:
     ticket_counter = 100
     leader_heartbeat_queue = Queue()
     reconfigure = False
+    ip_address = None
+    port_number = None
 
     def initiate_phase_one(self, msg):
         if msg['type'] == 'BUY':
@@ -220,9 +222,8 @@ class MultiPaxos:
         print 'length of my log ---', len(self.log)
         print 'index value is ----', index
         if len(self.log) == index:
-            print 'BEFORE STATE MACHINE EXEC '
             self.log.append(decided_value)
-            self.lowest_available_index=index+1
+            self.lowest_available_index = index+1
             #should i execute state machine here ??
             self.execute_state_machine(decided_value)
 
@@ -240,18 +241,21 @@ class MultiPaxos:
         ip = data_center_details['ip']
         port = int(data_center_details['port'])
         data_center_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
         try:
             global highest_data_center_id
-            data_center_socket.connect((ip, int(port)))
-            print 'Connected to ' + ip + ' on port ' + str(port)
-            data = json.dumps({'name': 'data_center', 'type': 'CON'})
-            data_center_socket.send(data)
-            new_data_center_id = highest_data_center_id + 1
-            send_data_center_channels[new_data_center_id] = data_center_socket
-            highest_data_center_id = new_data_center_id
+            if ip == self.ip_address and port == int(self.port_number):
+                print 'Detected own data center'
+            else:
+                data_center_socket.connect((ip, int(port)))
+                print 'Connected to ' + ip + ' on port ' + str(port)
+                data = json.dumps({'name': 'data_center', 'type': 'CON'})
+                data_center_socket.send(data)
+                new_data_center_id = highest_data_center_id + 1
+                send_data_center_channels[new_data_center_id] = data_center_socket
+                highest_data_center_id = new_data_center_id
         except:
             print traceback.print_exc()
-
 	
     def send_heartbeat_from_leader(self):
         self.leader_data_center_id = self.data_center_id
@@ -284,10 +288,9 @@ class MultiPaxos:
             self.leader_data_center_id = msg['leader_data_center_id']
             start_new_thread(self.check_heartbeat_from_leader, ())
         leader_lowest_available_index = msg['lowest_index']
-        if leader_lowest_available_index == self.lowest_available_index:
-            print "logs are matching"
-        else:
-            print "logs are not matching"
+
+        if leader_lowest_available_index > self.lowest_available_index:
+            #Log inconsistency
             self.send_update_request_leader()
 
     def check_heartbeat_from_leader(self):
@@ -320,7 +323,7 @@ class MultiPaxos:
         self.send_accept_message(ballot_number,my_value, self.lowest_available_index)
 
     def send_update_request_leader(self):
-        message=json.dumps({
+        message = json.dumps({
             'type': 'UPDATE',
             'last_index_follower': self.lowest_available_index-1,
             'data_center_id': self.data_center_id
@@ -334,20 +337,27 @@ class MultiPaxos:
         try:
             received_follower_last_index = msg['last_index_follower']
             data_center_id = msg['data_center_id']
-            new_log = self.log[received_follower_last_index+1:]
+            start_index = received_follower_last_index + 1
+            new_log = self.log[start_index:]
             message = json.dumps({
-            'type': 'UPDATED LOG',
-            'log':new_log
+                'type': 'UPDATED LOG',
+                'log': new_log,
+                'start_index' : start_index
             })
             send_data_center_channels[data_center_id].send(message)
         except:
             print traceback.print_exc()
 
     def receive_log_update(self, msg):
-        received_log_value=msg['log']
-        self.log.append(received_log)
-        print "new log value is",self.log
+        received_log_value = msg['log']
+        start_index = msg['start_index']
+        self.log[start_index:] = received_log_value
+        self.lowest_available_index = len(self.log)
+        self.execute_log_update(start_index)
 
+    def execute_log_update(self, start_index):
+        for log_value in self.log[start_index:]:
+            self.execute_state_machine(log_value)
 
 
 #******************
@@ -371,6 +381,7 @@ def setup_receive_channels(s):
 def setup_send_channels():
         global highest_data_center_id
         time.sleep(10)
+        data_center_counter = 1
         for i in range(3):
             if str(i+1) != data_center_id:
                 data_center_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -381,8 +392,9 @@ def setup_send_channels():
                     print 'Connected to ' + ip_address + ' on port ' + str(port_number)
                     data = json.dumps({'name': 'data_center', 'type': 'CON'})
                     data_center_socket.send(data)
-                    send_data_center_channels[i+1]=data_center_socket
-                    highest_data_center_id = i+1
+                    send_data_center_channels[i+1] = data_center_socket
+                    data_center_counter += 1
+                    highest_data_center_id = data_center_counter
                 except:
                     print 'Exception occurred while connecting to the other data centers '
                     print traceback.print_exc()
@@ -479,6 +491,9 @@ with open("config.json", "r") as configFile:
     config = json.load(configFile)
     ip_address = config["data_center_details"][data_center_id]["ip"]
     port_number = config["data_center_details"][data_center_id]["port"]
+
+paxos_obj.ip_address = ip_address
+paxos_obj.port_number = port_number
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
