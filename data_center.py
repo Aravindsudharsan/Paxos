@@ -26,7 +26,7 @@ class MultiPaxos:
     quorum_size = 2
     acks_ballot_dict ={}
     acks_ballot_accept_numVal ={}
-    buy_request_queue = deque([])
+    buy_request_queue_dict = {}
     accept_replies_ballot_dict={}
     log = []
     ticket_counter = 100
@@ -36,23 +36,28 @@ class MultiPaxos:
     port_number = None
 
     def initiate_phase_one(self, msg):
+        message_id = msg['message_id']
         if msg['type'] == 'BUY':
-            self.add_to_ticket_request_queue(msg['number_of_tickets'])
+            self.add_to_ticket_request_queue(message_id, msg['number_of_tickets'])
+            value = msg['number_of_tickets']
         elif msg['type'] == 'CHANGE':
-            self.add_to_ticket_request_queue(json.dumps(msg))
-        self.send_prepare_message()
+            self.add_to_ticket_request_queue(message_id, json.dumps(msg))
+            value = msg
+        start_new_thread(self.check_request_queue_cleared,(message_id,value,))
+        self.send_prepare_message(message_id)
 
-    def add_to_ticket_request_queue(self,number_of_tickets):
+    def add_to_ticket_request_queue(self,message_id,number_of_tickets):
         print 'Adding to ticket queue :',number_of_tickets
-        self.buy_request_queue.append(number_of_tickets)
+        self.buy_request_queue_dict[message_id] = number_of_tickets
 
-    def send_prepare_message(self):
+    def send_prepare_message(self,message_id):
         self.ballot_number = self.ballot_number + 1
         #incrementing acks for this ballot number as leader votes for itself
         self.acks_ballot_dict[self.ballot_number] = 1
         data = json.dumps({'type': 'PREPARE',
                            'ballot_number': {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id},
-                           'index': self.lowest_available_index})
+                           'index': self.lowest_available_index,
+                           'message_id': message_id})
 
         for send_data_center_id in send_data_center_channels:
             try:
@@ -65,9 +70,10 @@ class MultiPaxos:
         received_ballot_number = prepare_message['ballot_number']
         origin_data_center_id = received_ballot_number['data_center_id']
         received_index = prepare_message['index']
-        self.send_ack_message(received_ballot_number, origin_data_center_id, received_index)
+        message_id = prepare_message['message_id']
+        self.send_ack_message(received_ballot_number, origin_data_center_id, received_index, message_id)
 
-    def send_ack_message(self,received_ballot_number, origin_data_center_id, received_index):
+    def send_ack_message(self,received_ballot_number, origin_data_center_id, received_index, message_id):
 
         if received_ballot_number['ballot_num'] >= self.ballot_number:
             self.ballot_number = received_ballot_number['ballot_num']
@@ -84,7 +90,8 @@ class MultiPaxos:
                  'ballot_number': received_ballot_number,
                  'index': received_index,
                  'accept_num' : accept_num,
-                 'accept_val' : accept_val
+                 'accept_val' : accept_val,
+                 'message_id' : message_id
                  })
 
             send_data_center_channels[origin_data_center_id].send(data)
@@ -99,6 +106,7 @@ class MultiPaxos:
             received_ack_accept_num = ack_message['accept_num']
             received_ack_accept_val = ack_message['accept_val']
             index = ack_message['index']
+            message_id = ack_message['message_id']
 
             if received_ack_ballot_number in self.acks_ballot_dict:
                 self.acks_ballot_dict[received_ack_ballot_number] = self.acks_ballot_dict[received_ack_ballot_number] + 1
@@ -127,9 +135,9 @@ class MultiPaxos:
                     if highest_recv_ballot_val:
                         my_value = highest_recv_ballot_val
                     else:
-                        my_value = self.buy_request_queue[0]
+                        my_value = self.buy_request_queue_dict[message_id]
 
-                    self.send_accept_message(ballot_number,my_value,index)
+                    self.send_accept_message(ballot_number,my_value,index, message_id)
                 except:
                     print traceback.print_exc()
 
@@ -137,13 +145,15 @@ class MultiPaxos:
                 print 'here received ack could be of a number less than or greater than the quorum size --- what to be done ???'
 
 
-    def send_accept_message(self,received_ack_ballot_number,my_value,index):
+    def send_accept_message(self,received_ack_ballot_number,my_value,index, message_id):
         # setting ACCEPT REPLIES for this ballot number as 1 as the leader accepts its own value
         self.accept_replies_ballot_dict[received_ack_ballot_number['ballot_num']] = 1
         data = json.dumps({'type': 'ACCEPT',
                            'ballot_number': received_ack_ballot_number,
                            'my_value': my_value,
-                           'index': index})
+                           'index': index,
+                           'message_id': message_id
+                           })
 
         for send_data_center_id in send_data_center_channels:
             try:
@@ -156,6 +166,8 @@ class MultiPaxos:
         received_index = accept_message['index']
         received_ballot_number = accept_message['ballot_number']
         proposed_value = accept_message['my_value']
+        message_id = accept_message['message_id']
+
 
         if received_ballot_number['ballot_num'] >= self.ballot_number:
             #accepting the proposed value and setting AcceptNum and AcceptVal for that index
@@ -163,15 +175,17 @@ class MultiPaxos:
             self.accept_val_index_dict[received_index] = proposed_value
 
             #send accept reply message to leader
-            self.send_accept_reply_message(received_ballot_number,proposed_value,received_index)
+            self.send_accept_reply_message(received_ballot_number,proposed_value,received_index, message_id)
 
-    def send_accept_reply_message(self,received_ballot_number,proposed_value,received_index):
+    def send_accept_reply_message(self,received_ballot_number,proposed_value,received_index, message_id):
         origin_data_center_id = received_ballot_number['data_center_id']
         data = json.dumps(
             {'type': 'ACCEPT_REPLY',
              'ballot_number': received_ballot_number,
              'index': received_index,
-             'my_value': proposed_value})
+             'my_value': proposed_value,
+             'message_id': message_id
+             })
 
         send_data_center_channels[origin_data_center_id].send(data)
 
@@ -182,6 +196,7 @@ class MultiPaxos:
         received_accept_reply_ballot = ballot_number['ballot_num']
         decided_value = accept_reply_message['my_value']
         index = accept_reply_message['index']
+        message_id = accept_reply_message['message_id']
 
         if received_accept_reply_ballot in self.accept_replies_ballot_dict:
             self.accept_replies_ballot_dict[received_accept_reply_ballot] = self.accept_replies_ballot_dict[received_accept_reply_ballot] + 1
@@ -192,23 +207,26 @@ class MultiPaxos:
             #here i have gotten majority in 2nd phase, so I'm the leader and now I can start sending heartbeat messages to all other data centers
             if self.leader_data_center_id == None:
                 self.send_heartbeat_from_leader()
-            if self.buy_request_queue[0] == decided_value:
-                self.buy_request_queue.popleft()
+            if self.buy_request_queue_dict[message_id] == decided_value:
+                del self.buy_request_queue_dict[message_id]
+
                 if len(self.log) == index:
                     self.log.append(decided_value)
                     self.lowest_available_index = index + 1
                     self.execute_state_machine(decided_value)
-                    self.send_decide_message(ballot_number,decided_value,index)
+                    self.send_decide_message(ballot_number,decided_value,index,message_id)
 
         else:
             print "***"
 
-    def send_decide_message(self,ballot_number,decided_value,index):
+    def send_decide_message(self,ballot_number,decided_value,index,message_id):
         data = json.dumps(
             {'type': 'DECIDE',
              'ballot_number': ballot_number,
              'my_value': decided_value,
-             'index': index})
+             'index': index,
+             'message_id': message_id
+             })
 
         for data_center_id in send_data_center_channels:
             try:
@@ -314,13 +332,16 @@ class MultiPaxos:
         #this function directly initiates phase 2 as leader is stable
         if message['type'] == 'BUY':
             my_value = message['number_of_tickets']
+            value = message['number_of_tickets']
 
         elif message['type'] == 'CHANGE':
             my_value = json.dumps(message)
-
-        self.add_to_ticket_request_queue(my_value)
+            value = message
+        message_id = message['message_id']
+        self.add_to_ticket_request_queue(message_id, my_value)
         ballot_number = {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id}
-        self.send_accept_message(ballot_number,my_value, self.lowest_available_index)
+        start_new_thread(self.check_request_queue_cleared, (message_id,value,))
+        self.send_accept_message(ballot_number,my_value, self.lowest_available_index, message_id)
 
     def send_update_request_leader(self):
         message = json.dumps({
@@ -359,7 +380,29 @@ class MultiPaxos:
         for log_value in self.log[start_index:]:
             self.execute_state_machine(log_value)
 
-
+    def check_request_queue_cleared(self,message_id,value):
+        while True:
+            time.sleep(15)
+            if self.buy_request_queue_dict:
+                if message_id in self.buy_request_queue_dict:
+                    print "Retrying request"
+                    if self.leader_data_center_id is None:
+                        self.send_prepare_message(message_id)
+                    elif self.leader_data_center_id != self.data_center_id:
+                        del self.buy_request_queue_dict[message_id]
+                        if isinstance(value, int):
+                            self.forward_request_to_leader({'client_id': 1, 'type': 'BUY', 'number_of_tickets': value,'message_id': message_id})
+                        else:
+                            self.forward_request_to_leader(value)
+                        break
+                    else:
+                        ballot_number = {'ballot_num': self.ballot_number, 'data_center_id': self.data_center_id}
+                        if isinstance(value, int):
+                            self.send_accept_message(ballot_number, value, self.lowest_available_index, message_id)
+                        else:
+                            self.send_accept_message(ballot_number, json.dumps(value), self.lowest_available_index, message_id)
+                else:
+                    break
 #******************
 
 

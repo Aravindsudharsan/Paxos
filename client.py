@@ -4,6 +4,7 @@ import time
 import traceback
 from thread import *
 import threading
+from random import randint
 
 
 data_center_id = raw_input("Enter the data center id to connect to:")
@@ -46,7 +47,10 @@ while True:
     if message.startswith("buy"):
         number_of_tickets = int(message[4:])
         print "number of tickets is ", number_of_tickets
-        data = json.dumps({'client_id': client_id, 'type': 'BUY', 'number_of_tickets':number_of_tickets})
+        message_id = randint(0,10000)
+        data = json.dumps({'client_id': client_id, 'type': 'BUY',
+                           'number_of_tickets':number_of_tickets,
+                           'message_id':message_id })
         data_center_socket.send(data)
     elif message.startswith("show"):
         data=json.dumps({'client_id':client_id,'type':'SHOW'})
@@ -55,7 +59,9 @@ while True:
         new_data_center_details = message.split(" ")
         ip_address = new_data_center_details[1]
         port = new_data_center_details[2]
-        data = json.dumps({'client_id': client_id, 'type': 'CHANGE', 'ip': ip_address,'port': port})
+        message_id = randint(0, 10000)
+        data = json.dumps({'client_id': client_id, 'type': 'CHANGE', 'ip': ip_address,'port': port,
+                           'message_id': message_id})
         data_center_socket.send(data)
 
 
