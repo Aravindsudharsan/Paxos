@@ -139,7 +139,7 @@ class MultiPaxos:
                     print traceback.print_exc()
 
             else:
-                print 'here received ack could be of a number less than or greater than the quorum size --- what to be done ???'
+                print '*********'
 
 
     def send_accept_message(self,received_ack_ballot_number,my_value,index, message_id):
@@ -202,8 +202,7 @@ class MultiPaxos:
         if self.accept_replies_ballot_dict[received_accept_reply_ballot] == self.quorum_size:
             # here can/should i execute state machine ??
             #here i have gotten majority in 2nd phase, so I'm the leader and now I can start sending heartbeat messages to all other data centers
-            if self.leader_data_center_id == None:
-                self.send_heartbeat_from_leader()
+
             if self.buy_request_queue_dict[message_id] == decided_value:
                 del self.buy_request_queue_dict[message_id]
 
@@ -212,6 +211,9 @@ class MultiPaxos:
                     self.lowest_available_index = index + 1
                     self.execute_state_machine(decided_value)
                     self.send_decide_message(ballot_number,decided_value,index,message_id)
+
+            if self.leader_data_center_id == None:
+                self.send_heartbeat_from_leader()
 
         else:
             print "***"
@@ -277,7 +279,6 @@ class MultiPaxos:
 
     def send_heartbeat_to_followers(self):
         while True:
-            time.sleep(3)
             data = json.dumps({
                 'type': 'HEARTBEAT',
                 'leader_data_center_id': self.data_center_id,
@@ -289,6 +290,8 @@ class MultiPaxos:
                     send_data_center_channels[send_data_center_id].send(data)
                 except:
                     continue
+            time.sleep(3)
+
 
     def receive_heartbeat_from_leader(self,msg):
         #3 scenarios
@@ -424,8 +427,8 @@ def setup_send_channels():
                     data_center_socket.send(data)
                     send_data_center_channels[i+1] = data_center_socket
                 except:
-                    print 'Exception occurred while connecting to the other data centers '
-                    print traceback.print_exc()
+                    print '#####'
+                    #print traceback.print_exc()
 
 def receive_connect_message_common(socket):
         try:
