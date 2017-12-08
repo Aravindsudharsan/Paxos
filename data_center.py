@@ -7,6 +7,7 @@ from collections import deque
 import threading
 from Queue import Queue
 import re
+import math
 
 recv_client_channel = []
 recv_data_center_channels = []
@@ -18,12 +19,12 @@ highest_data_center_id = 0
 class MultiPaxos:
     data_center_id = None
     leader_data_center_id = None
-    last_index=None
     lowest_available_index = 0
     ballot_number = 0
     accept_num_index_dict ={}
     accept_val_index_dict = {}
     quorum_size = 2
+    alive_sites = 3
     acks_ballot_dict ={}
     acks_ballot_accept_numVal ={}
     buy_request_queue_dict = {}
@@ -237,8 +238,6 @@ class MultiPaxos:
     def receive_decide_message(self,decide_message):
         index = decide_message['index']
         decided_value = decide_message['my_value']
-        print 'length of my log ---', len(self.log)
-        print 'index value is ----', index
         if len(self.log) == index:
             self.log.append(decided_value)
             self.lowest_available_index = index+1
@@ -272,6 +271,9 @@ class MultiPaxos:
                 new_data_center_id = highest_data_center_id + 1
                 send_data_center_channels[new_data_center_id] = data_center_socket
                 highest_data_center_id = new_data_center_id
+                self.alive_sites += 1
+                self.quorum_size = math.floor(self.alive_sites/2) + 1
+                print 'New quorum size ', self.quorum_size
         except:
             print traceback.print_exc()
 	
@@ -442,8 +444,7 @@ def setup_send_channels():
                     print 'Exception occurred while connecting to the other data centers '
                     print traceback.print_exc()
 
-def receive_connect_message_common():
-    for socket in recv_channels:
+def receive_connect_message_common(socket):
         try:
             received_message = socket.recv(4096)
             if received_message:
@@ -454,76 +455,76 @@ def receive_connect_message_common():
                     msg = json.loads(message)
                     if msg['type'] == 'CON':
                         if msg['name'] == 'client':
-                            recv_client_channel.append(socket)
+                            print 'RECEIVED CONNECTION FROM CLIENT'
+                            start_new_thread(receive_message_client, (socket,))
                         elif msg['name'] == 'data_center':
-                            recv_data_center_channels.append(socket)
+                            print 'RECEIVED CONNECTION FROM DATACENTER'
+                            start_new_thread(receive_message_datacenters, (socket,))
         except:
             print traceback.print_exc()
 
-def receive_message_client():
+def receive_message_client(socket):
     while True:
         try:
-            if recv_client_channel[0]:
-                message = recv_client_channel[0].recv(4096)
-                if message:
-                    print "Message received from client ", message
-                    msg = json.loads(message)
-                    if msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
-                        # initiate Phase 1 of Paxos to float a leader election
-                        # here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
-                        # 3 scenarios - 1.I'm the leader 2.I'm a follower and a leader exists 3.No leader has been elected till now
-                        if paxos_obj.data_center_id == paxos_obj.leader_data_center_id:
-                            print 'Leader here - Directly run phase 2 '
-                            # here must initiate phase 2 directly
-                            paxos_obj.initiate_phase_two(msg)
-                        elif paxos_obj.leader_data_center_id is not None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
-                            print 'Follower here - forwarding request to leader'
-                            paxos_obj.forward_request_to_leader(msg)
-                        elif paxos_obj.leader_data_center_id == None:
-                            print 'I have to initiate leader election '
-                            paxos_obj.initiate_phase_one(msg)
-                    elif msg['type'] == 'SHOW':
-                        data = json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
-                        recv_client_channel[0].send(data)
+            message = socket.recv(4096)
+            if message:
+                print "Message received from client ", message
+                msg = json.loads(message)
+                if msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
+                    # initiate Phase 1 of Paxos to float a leader election
+                    # here we need to capture the number of tickets !!!! should i send it in parameter to initiate_phase_one ??
+                    # 3 scenarios - 1.I'm the leader 2.I'm a follower and a leader exists 3.No leader has been elected till now
+                    if paxos_obj.data_center_id == paxos_obj.leader_data_center_id:
+                        print 'Leader here - Directly run phase 2 '
+                        # here must initiate phase 2 directly
+                        paxos_obj.initiate_phase_two(msg)
+                    elif paxos_obj.leader_data_center_id is not None and paxos_obj.leader_data_center_id != paxos_obj.data_center_id:
+                        print 'Follower here - forwarding request to leader'
+                        paxos_obj.forward_request_to_leader(msg)
+                    elif paxos_obj.leader_data_center_id == None:
+                        print 'I have to initiate leader election '
+                        paxos_obj.initiate_phase_one(msg)
+                elif msg['type'] == 'SHOW':
+                    data = json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
+                    socket.send(data)
         except:
             continue
 
 
-def receive_message_datacenters():
+def receive_message_datacenters(socket):
     while True:
-        for data_center_socket in recv_data_center_channels:
-            try:
-                message_dc = data_center_socket.recv(4096)
-                if message_dc:
-                    messages_dc = re.split('(\{.*?\})(?= *\{)', message_dc)
-                    for message in messages_dc:
-                        if message == '\n' or message == '' or message is None:
-                            continue
-                        msg = json.loads(message)
-                        print "Message received from data center ", message
-                        if msg['type'] == 'PREPARE':
-                            paxos_obj.receive_prepare_message(msg)
-                        elif msg['type'] == 'ACK':
-                            paxos_obj.receive_ack_message(msg)
-                        elif msg['type'] == 'ACCEPT':
-                            paxos_obj.receive_accept_message(msg)
-                        elif msg['type'] == 'ACCEPT_REPLY':
-                            paxos_obj.receive_accept_reply_message(msg)
-                        elif msg['type'] == 'DECIDE':
-                            paxos_obj.receive_decide_message(msg)
-                        elif msg['type'] == 'HEARTBEAT':
-                            paxos_obj.receive_heartbeat_from_leader(msg)
-                        elif msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
-                            #here getting request from peer data center means that this data center is the stable leader
-                            #so directly initiate phase two
-                            print 'CHECKING FOR MESSAGE FROM PEER ---->'
-                            paxos_obj.initiate_phase_two(msg)
-                        elif msg['type'] == 'UPDATE':
-                            paxos_obj.send_log_update(msg)
-                        elif msg['type'] == 'UPDATED LOG':
-                            paxos_obj.receive_log_update(msg)
-            except:
-                continue
+        try:
+            message_dc = socket.recv(4096)
+            if message_dc:
+                messages_dc = re.split('(\{.*?\})(?= *\{)', message_dc)
+                for message in messages_dc:
+                    if message == '\n' or message == '' or message is None:
+                        continue
+                    msg = json.loads(message)
+                    print "Message received from data center ", message
+                    if msg['type'] == 'PREPARE':
+                        paxos_obj.receive_prepare_message(msg)
+                    elif msg['type'] == 'ACK':
+                        paxos_obj.receive_ack_message(msg)
+                    elif msg['type'] == 'ACCEPT':
+                        paxos_obj.receive_accept_message(msg)
+                    elif msg['type'] == 'ACCEPT_REPLY':
+                        paxos_obj.receive_accept_reply_message(msg)
+                    elif msg['type'] == 'DECIDE':
+                        paxos_obj.receive_decide_message(msg)
+                    elif msg['type'] == 'HEARTBEAT':
+                        paxos_obj.receive_heartbeat_from_leader(msg)
+                    elif msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
+                        #here getting request from peer data center means that this data center is the stable leader
+                        #so directly initiate phase two
+                        print 'CHECKING FOR MESSAGE FROM PEER ---->'
+                        paxos_obj.initiate_phase_two(msg)
+                    elif msg['type'] == 'UPDATE':
+                        paxos_obj.send_log_update(msg)
+                    elif msg['type'] == 'UPDATED LOG':
+                        paxos_obj.receive_log_update(msg)
+        except:
+            continue
 
 #start of program execution
 
@@ -540,25 +541,18 @@ paxos_obj.port_number = port_number
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.setblocking(0)
+
 s.bind((ip_address, int(port_number)))
 print 'Bound at ',ip_address, port_number
 s.listen(10)
 
-start_new_thread(setup_receive_channels, (s,))
+#start_new_thread(setup_receive_channels, (s,))
 t1 = threading.Thread(target=setup_send_channels, args=())
 t1.start()
 # wait till all send connections have been set up
 t1.join()
 
-#wait till all connections have been accepted before receiving messages from client/data center
-time.sleep(10)
-receive_connect_message_common()
-start_new_thread(receive_message_client, ())
-start_new_thread(receive_message_datacenters, ())
-paxos_obj.reconfigure = True
-
 while True:
-    message = raw_input("Enter request for tickets : ")
-    if message == "buy":
-	    paxos_obj.buy_tickets
+    conn, addr = s.accept()
+    start_new_thread(receive_connect_message_common, (conn,))
+
