@@ -10,11 +10,8 @@ import re
 import math
 
 recv_client_channel = []
-recv_data_center_channels = []
 send_data_center_channels = {}
-recv_channels = []
 data_center_id = None
-highest_data_center_id = 0
 
 class MultiPaxos:
     data_center_id = None
@@ -32,7 +29,6 @@ class MultiPaxos:
     log = []
     ticket_counter = 100
     leader_heartbeat_queue = Queue()
-    reconfigure = False
     ip_address = None
     port_number = None
 
@@ -257,10 +253,10 @@ class MultiPaxos:
         data_center_details = json.loads(decided_value)
         ip = data_center_details['ip']
         port = int(data_center_details['port'])
+        data_center_id = int(data_center_details['data_center_id'])
         data_center_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         try:
-            global highest_data_center_id
             if ip == self.ip_address and port == int(self.port_number):
                 print 'Detected own data center'
             else:
@@ -268,9 +264,7 @@ class MultiPaxos:
                 print 'Connected to ' + ip + ' on port ' + str(port)
                 data = json.dumps({'name': 'data_center', 'type': 'CON'})
                 data_center_socket.send(data)
-                new_data_center_id = highest_data_center_id + 1
-                send_data_center_channels[new_data_center_id] = data_center_socket
-                highest_data_center_id = new_data_center_id
+                send_data_center_channels[data_center_id] = data_center_socket
                 self.alive_sites += 1
                 self.quorum_size = math.floor(self.alive_sites/2) + 1
                 print 'New quorum size ', self.quorum_size
@@ -318,11 +312,9 @@ class MultiPaxos:
             #check the queue max every 3 seconds to see if a value is present (True means it is a blocking call )
             time.sleep(3)
             try:
-                #print 'BEFORE POLLING%%%'
                 heartbeat_message = self.leader_heartbeat_queue.get(False)
             except:
-                #print traceback.print_exc()
-                print '** Detected leader failure **'
+                print '** DETECTED LEADER FAILURE **'
                 del send_data_center_channels[self.leader_data_center_id]
                 self.leader_data_center_id = None
                 break
@@ -387,7 +379,7 @@ class MultiPaxos:
             time.sleep(15)
             if self.buy_request_queue_dict:
                 if message_id in self.buy_request_queue_dict:
-                    print "Retrying request"
+                    print 'Retrying request'
                     if self.leader_data_center_id is None:
                         self.send_prepare_message(message_id)
                     elif self.leader_data_center_id != self.data_center_id:
@@ -412,11 +404,6 @@ def setup_receive_channels(s):
     while 1:
         try:
             conn, addr = s.accept()
-            recv_channels.append(conn)
-
-            if paxos_obj.reconfigure:
-                print 'Adding new config data center to recv_data_center_channels'
-                recv_data_center_channels.append(conn)
         except:
             continue
             print 'Exception occurred while setting up receive channels '
@@ -424,9 +411,7 @@ def setup_receive_channels(s):
 
 
 def setup_send_channels():
-        global highest_data_center_id
         time.sleep(10)
-        data_center_counter = 1
         for i in range(3):
             if str(i+1) != data_center_id:
                 data_center_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -438,8 +423,6 @@ def setup_send_channels():
                     data = json.dumps({'name': 'data_center', 'type': 'CON'})
                     data_center_socket.send(data)
                     send_data_center_channels[i+1] = data_center_socket
-                    data_center_counter += 1
-                    highest_data_center_id = data_center_counter
                 except:
                     print 'Exception occurred while connecting to the other data centers '
                     print traceback.print_exc()
@@ -482,7 +465,7 @@ def receive_message_client(socket):
                         print 'Follower here - forwarding request to leader'
                         paxos_obj.forward_request_to_leader(msg)
                     elif paxos_obj.leader_data_center_id == None:
-                        print 'I have to initiate leader election '
+                        print 'Initiating leader election '
                         paxos_obj.initiate_phase_one(msg)
                 elif msg['type'] == 'SHOW':
                     data = json.dumps({'key_value':'RESULT','ticket_count':paxos_obj.ticket_counter,'log_value':paxos_obj.log})
@@ -517,7 +500,7 @@ def receive_message_datacenters(socket):
                     elif msg['type'] == 'BUY' or msg['type'] == 'CHANGE':
                         #here getting request from peer data center means that this data center is the stable leader
                         #so directly initiate phase two
-                        print 'CHECKING FOR MESSAGE FROM PEER ---->'
+                        print 'CHECKING FOR MESSAGE FROM PEER '
                         paxos_obj.initiate_phase_two(msg)
                     elif msg['type'] == 'UPDATE':
                         paxos_obj.send_log_update(msg)

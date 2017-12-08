@@ -59,9 +59,11 @@ while True:
         new_data_center_details = message.split(" ")
         ip_address = new_data_center_details[1]
         port = new_data_center_details[2]
+        new_data_center_id = new_data_center_details[3]
         message_id = randint(0, 10000)
         data = json.dumps({'client_id': client_id, 'type': 'CHANGE', 'ip': ip_address,'port': port,
-                           'message_id': message_id})
+                           'message_id': message_id,
+                           'data_center_id': new_data_center_id})
         data_center_socket.send(data)
 
 
